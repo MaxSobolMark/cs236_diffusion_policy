@@ -228,6 +228,8 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
         self.tqdm_interval_sec = tqdm_interval_sec
 
     def run(self, policy: BaseLowdimPolicy, action_temporal_ensemble: bool = False):
+        if action_temporal_ensemble:
+            print("USING ACTION TEMPORAL ENSEMBLE")
         device = policy.device
         dtype = policy.dtype
         env = self.env
@@ -389,35 +391,35 @@ class RobomimicLowdimRunner(BaseLowdimRunner):
 
 
 def action_temporal_ensembling_add_action_to_buffer(
-    action: torch.Tensor,
-    buffer: torch.Tensor,
+    action: np.ndarray,
+    buffer: np.ndarray,
 ):
     # buffer[0] is the oldest action
     # buffer has shape [action_prediction_horizon, batch_size, action_prediction_horizon,
     # action_dim]
 
     # shift buffer
-    buffer[:-1] = buffer[1:].clone()
+    buffer[:-1] = buffer[1:]
     buffer[-1] = action
     return buffer
 
 
-def action_temporal_ensembling_get_action_from_buffer(buffer: torch.Tensor):
+def action_temporal_ensembling_get_action_from_buffer(buffer: np.ndarray):
     # buffer[0] is the oldest action
     # buffer has shape [action_prediction_horizon, batch_size, action_prediction_horizon,
     # action_dim]
 
-    weights = torch.exp(-10 * torch.arange(buffer.shape[0], device=buffer.device))
-    weights = weights / torch.sum(weights)
+    weights = np.exp(-10 * np.arange(buffer.shape[0]))
+    weights = weights / np.sum(weights)
 
     # Get corresponding actions for the current timestep, i.e. buffer[0, :, -1], buffer[1, :, -2],
     # ...
 
     action_prediction_horizon = buffer.shape[0]
     actions_for_current_timestep = buffer[
-        torch.arange(action_prediction_horizon, device=buffer.device),
+        np.arange(action_prediction_horizon),
         :,
-        torch.arange(action_prediction_horizon - 1, -1, -1),
+        np.arange(action_prediction_horizon - 1, -1, -1),
         :,
     ]
     assert actions_for_current_timestep.shape == (
@@ -427,7 +429,7 @@ def action_temporal_ensembling_get_action_from_buffer(buffer: torch.Tensor):
     )
 
     # Weight the actions
-    action = torch.sum(weights[:, None, None] * actions_for_current_timestep, dim=0)
+    action = np.sum(weights[:, None, None] * actions_for_current_timestep, axis=0)
     assert action.shape == (buffer.shape[1], buffer.shape[3])
 
     return action
@@ -437,25 +439,23 @@ def test_action_temporal_ensembling():
     action_prediction_horizon = 3
     batch_size = 2
     action_dim = 4
-    buffer = torch.zeros(
+    buffer = np.zeros(
         action_prediction_horizon, batch_size, action_prediction_horizon, action_dim
     )
-    action = torch.ones(batch_size, action_prediction_horizon, action_dim)
+    action = np.ones(batch_size, action_prediction_horizon, action_dim)
     buffer = action_temporal_ensembling_add_action_to_buffer(action, buffer)
-    assert torch.all(
-        buffer[0] == torch.zeros(batch_size, action_prediction_horizon, action_dim)
+    assert np.all(
+        buffer[0] == np.zeros(batch_size, action_prediction_horizon, action_dim)
     )
-    assert torch.all(
-        buffer[1] == torch.zeros(batch_size, action_prediction_horizon, action_dim)
+    assert np.all(
+        buffer[1] == np.zeros(batch_size, action_prediction_horizon, action_dim)
     )
-    assert torch.all(
-        buffer[2] == torch.ones(batch_size, action_prediction_horizon, action_dim)
+    assert np.all(
+        buffer[2] == np.ones(batch_size, action_prediction_horizon, action_dim)
     )
 
     averaged_action = action_temporal_ensembling_get_action_from_buffer(buffer)
     action_value = math.exp(-10 * 2)
-    assert torch.all(
-        torch.isclose(
-            averaged_action, action_value * torch.ones(batch_size, action_dim)
-        )
+    assert np.all(
+        np.isclose(averaged_action, action_value * torch.ones(batch_size, action_dim))
     )
